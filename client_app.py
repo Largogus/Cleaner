@@ -3,7 +3,6 @@ from PyQt5.QtWidgets import (QWidget, QPushButton, QLabel, QApplication, QVBoxLa
 from PyQt5.QtCore import Qt, QTimer, QDir
 from PyQt5.QtGui import QFont, QIcon, QCloseEvent
 from PyQt5.QtNetwork import QTcpSocket
-import bcrypt
 import sys
 import os
 import json
@@ -11,6 +10,7 @@ import create_properties
 from loguru import logger
 import shutil
 from win32com.client import Dispatch
+import winreg
 
 path = os.getcwd()
 
@@ -114,11 +114,13 @@ class App(QWidget):
         )
 
         if ok and text:
-            if bcrypt.checkpw(text.encode(), data['owner-password'].encode()):
+            if create_properties.verify_password(data['owner-password'], text):
                 QApplication.quit()
             else:
                 self.show()
                 QMessageBox.warning(self, "Ошибка", "Неверный пароль!")
+        else:
+            self.show()
 
     def on_tray(self, reason: bool):
         if reason == QSystemTrayIcon.DoubleClick:
@@ -219,6 +221,7 @@ class App(QWidget):
                     except Exception as e:
                         logger.error(f"Ошибка: {e}")
 
+            self.delete_roblox_registry_keys()
             try:
                 roblox_path = os.path.join(os.environ['LOCALAPPDATA'], 'Roblox')
                 shutil.rmtree(roblox_path)
@@ -245,6 +248,45 @@ class App(QWidget):
     def editLocale(self):
         apps = create_properties.CreateLocal('locked')
         apps.exec_()
+
+    def delete_registry_key_tree(self, hive, key_path):
+        """Удаляет раздел реестра и все его подразделы без использования рекурсии"""
+        try:
+            # Открываем родительский ключ
+            with winreg.OpenKey(hive, key_path, 0, winreg.KEY_ALL_ACCESS) as key:
+                # Получаем количество подразделов
+                subkey_count = winreg.QueryInfoKey(key)[0]
+
+                # Удаляем все подразделы в цикле
+                for i in range(subkey_count):
+                    try:
+                        subkey_name = winreg.EnumKey(key, 0)  # Всегда берем первый подраздел
+                        subkey_fullpath = f"{key_path}\\{subkey_name}"
+                        self.delete_registry_key_tree(hive, subkey_fullpath)  # Рекурсивный вызов
+                    except OSError as e:
+                        logger.error(f"Ошибка при удалении подраздела: {e}")
+                        continue
+
+            # Когда все подразделы удалены - удаляем сам ключ
+            winreg.DeleteKey(hive, key_path)
+            logger.success(f"Успешно удалено: {key_path}")
+            return True
+
+        except FileNotFoundError:
+            logger.warning(f"Раздел не найден: {key_path}")
+            return False
+        except PermissionError:
+            logger.error("Отказано в доступе. Требуются права администратора!")
+            return False
+        except Exception as e:
+            logger.error(f"Ошибка при удалении {key_path}: {str(e)}")
+            return False
+
+    def delete_roblox_registry_keys(self):
+        self.delete_registry_key_tree(
+            hive=winreg.HKEY_CURRENT_USER,
+            key_path=r"SOFTWARE\ROBLOX Corporation"
+        )
 
 
 def check():

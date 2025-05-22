@@ -6,7 +6,33 @@ import sys
 import os
 import json
 from socket import gethostname, gethostbyname
-import bcrypt
+from argon2 import PasswordHasher
+
+
+ph = PasswordHasher(
+    time_cost=3,
+    memory_cost=65536,
+    parallelism=4,
+    hash_len=32,
+    salt_len=16
+)
+
+
+def hash_password(password: str) -> str:
+    pepper = b""
+    salt = os.urandom(16)
+    combined_salt = pepper + salt
+    password_bytes = password.encode('utf-8')
+    hashed = ph.hash(password_bytes, salt=combined_salt)
+    return hashed
+
+
+def verify_password(stored_hash: str, input_password: str) -> bool:
+    try:
+        ph.verify(stored_hash, input_password.encode('utf-8'))
+        return True
+    except:
+        return False
 
 
 class CreateProperties(QDialog):
@@ -80,15 +106,9 @@ class CreateProperties(QDialog):
         self.setLayout(self.main_lay)
 
     def saveFunc(self):
-        password = self.host_password.text().encode('utf-8')
-        hashed = bcrypt.hashpw(password, bcrypt.gensalt())
+        password = self.host_password.text()
 
-        stored_hash = hashed.decode('utf-8')
-
-        # path = os.getcwd()
-        # properties = os.path.join(path, "properties.json")
-        #
-        # if not properties:
+        stored_hash = hash_password(password)
 
         if self.type == 'locked':
             with open('properties.json', 'r', encoding='utf-8') as f:
@@ -98,21 +118,24 @@ class CreateProperties(QDialog):
                                               "Пароль админа:", QLineEdit.Normal,
                                               QDir().home().dirName())
 
-            if not bcrypt.checkpw(text.encode('utf-8'), texts["owner-password"].encode('utf-8')):
+            if verify_password(texts['owner-password'], text):
+                texts['owner-password'] = stored_hash
+
+                with open('properties.json', 'w', encoding='utf-8') as f:
+                    json.dump(texts, f, ensure_ascii=False, indent=4)
+            else:
                 QMessageBox.warning(self, "Ошибка", "Неверный пароль!")
                 return
 
-            texts['owner-password'] = stored_hash
-
         if self.type == 'open':
-            with open('properties.json', 'w', encoding='utf-8') as f:
-                lst = {
-                    'owner-ip': self.host_ip.text(),
-                    'owner-password': stored_hash,
-                    'connected-ip': []
-                }
+            lst = {
+                'owner-ip': self.host_ip.text(),
+                'owner-password': stored_hash,
+                'connected-ip': []
+            }
 
-        json.dump(lst, f, ensure_ascii=False, indent=4)
+            with open('properties.json', 'w', encoding='utf-8') as f:
+                json.dump(lst, f, ensure_ascii=False, indent=4)
 
         self.close()
 
@@ -170,27 +193,33 @@ class CreateLocal(QDialog):
         self.setLayout(self.main_lay)
 
     def saveFunc(self):
-        with open('properties.json', 'r', encoding='utf-8') as f:
-            lst = json.load(f)
-
         if self.type == 'locked':
-            text, ok = QInputDialog().getText(self, "Введите пароль",
-                                              "IP компьюетра:", QLineEdit.Normal)
+            with open('local.json', 'r', encoding='utf-8') as f:
+                lst = json.load(f)
 
-            if ok:
-                if bcrypt.checkpw(text.encode('utf-8'), lst['owner-password'].encode('utf-8')):
-                    lst[''] = self.host_ip.text()
-                else:
-                    QMessageBox.warning(self, "Ошибка", "Неверный пароль!")
-                    return
+            if 'owner-password' not in lst:
+                lst['ip'] = self.host_ip.text()
 
                 with open('local.json', 'w', encoding='utf-8') as f:
-                    lst = {
-                        'ip': self.host_ip.text(),
-                        'port': 12345
-                    }
-
                     json.dump(lst, f, ensure_ascii=False, indent=4)
+            else:
+                text, ok = QInputDialog().getText(self, "Введите пароль",
+                                                  "Пороль:", QLineEdit.Password)
+
+                if ok:
+                    if verify_password(lst['owner-password'], text):
+                        lst['owner-ip'] = self.host_ip.text()
+                    else:
+                        QMessageBox.warning(self, "Ошибка", "Неверный пароль!")
+                        return
+
+                    with open('local.json', 'w', encoding='utf-8') as f:
+                        lst = {
+                            'ip': self.host_ip.text(),
+                            'port': 12345
+                        }
+
+                        json.dump(lst, f, ensure_ascii=False, indent=4)
         else:
             with open('local.json', 'w', encoding='utf-8') as f:
                 lst = {
